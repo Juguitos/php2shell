@@ -35,6 +35,24 @@ from typing import Optional
 
 # ─── helpers ────────────────────────────────────────────────────────────────
 
+_BANNER = r"""
+██████╗ ██╗  ██╗██████╗ ██████╗ ███████╗██╗  ██╗███████╗██╗     ██╗
+██╔══██╗██║  ██║██╔══██╗╚════██╗██╔════╝██║  ██║██╔════╝██║     ██║
+██████╔╝███████║██████╔╝ █████╔╝███████╗███████║█████╗  ██║     ██║
+██╔═══╝ ██╔══██║██╔═══╝ ██╔═══╝ ╚════██║██╔══██║██╔══╝  ██║     ██║
+██║     ██║  ██║██║     ███████╗███████║██║  ██║███████╗███████╗███████╗
+╚═╝     ╚═╝  ╚═╝╚═╝     ╚══════╝╚══════╝╚═╝  ╚═╝╚══════╝╚══════╝╚══════╝
+  CVE-2026-109618 / CVE-2026-109619  |  PHP session.upload_progress UAF
+  Author : Juguitos
+  GitHub : https://github.com/Juguitos/php2shell
+  For authorized security research and penetration testing only.
+"""
+
+
+def _print_banner() -> None:
+    print("\033[1;36m" + _BANNER + "\033[0m")
+
+
 def make_socket(host: str, port: int, use_tls: bool,
                 verify: bool = True, cafile: Optional[str] = None) -> socket.socket:
     s = socket.create_connection((host, port), timeout=30)
@@ -862,44 +880,67 @@ def assess_vulnerability(host: str, port: int, path: str, use_tls: bool,
     }
 
 
+def _wrap(text: str, width: int) -> list[str]:
+    """Split text into lines of at most width characters, breaking on spaces."""
+    lines = []
+    while len(text) > width:
+        cut = text.rfind(" ", 0, width)
+        if cut == -1:
+            cut = width
+        lines.append(text[:cut])
+        text = text[cut:].lstrip()
+    lines.append(text)
+    return lines
+
+
 def print_assessment(assessment: dict) -> None:
     """Pretty-print the vulnerability assessment block."""
     verdict = assessment["verdict"]
-    # colour codes (ANSI) — degrade gracefully on Windows cmd
     _C = {
-        "VULNERABLE":        "\033[1;31m",   # bold red
-        "LIKELY VULNERABLE": "\033[1;33m",   # bold yellow
-        "NOT VULNERABLE":    "\033[1;32m",   # bold green
-        "UNKNOWN":           "\033[1;36m",   # bold cyan
+        "VULNERABLE":        "\033[1;31m",
+        "LIKELY VULNERABLE": "\033[1;33m",
+        "NOT VULNERABLE":    "\033[1;32m",
+        "UNKNOWN":           "\033[1;36m",
         "RESET":             "\033[0m",
     }
     colour = _C.get(verdict, "")
     reset  = _C["RESET"]
 
-    width = 62
-    print("┌" + "─" * width + "┐")
-    print(f"│{'VULNERABILITY ASSESSMENT':^{width}}│")
-    print("├" + "─" * width + "┤")
-    print(f"│  Verdict     : {colour}{verdict:<{width - 16}}{reset}│")
-    print(f"│  PHP version : {assessment['php_version']:<{width - 16}}│")
-    print(f"│  Reason      : {assessment['reason'][:width - 16]:<{width - 16}}│")
-    # wrap long reason lines
-    remainder = assessment["reason"][width - 16:]
-    while remainder:
-        chunk = remainder[:width - 16]
-        print(f"│  {'':14}{chunk:<{width - 16}}│")
-        remainder = remainder[width - 16:]
+    # total inner width (between the two │ borders)
+    # prefix is: "  " (2) + label (14) + ": " (2) = 18 chars overhead
+    W     = 74
+    LABEL = 18
+    VWIDE = W - LABEL  # = 56, text column width
+
+    def row(label: str, value: str, col: str = "", rst: str = "") -> None:
+        lines = _wrap(value, VWIDE)
+        first = True
+        for ln in lines:
+            if first:
+                print(f"│  {label:<14}: {col}{ln:<{VWIDE}}{rst}│")
+                first = False
+            else:
+                print(f"│  {'':14}  {ln:<{VWIDE}}│")
+
+    print("┌" + "─" * W + "┐")
+    print(f"│{'VULNERABILITY ASSESSMENT':^{W}}│")
+    print("├" + "─" * W + "┤")
+    row("Verdict",     verdict,                    colour, reset)
+    row("PHP version", assessment["php_version"])
+    row("Reason",      assessment["reason"])
     if assessment["indicators"]:
-        print("├" + "─" * width + "┤")
-        print(f"│  Indicators:{'':>{width - 13}}│")
+        print("├" + "─" * W + "┤")
+        print(f"│  {'Indicators:':<{W - 2}}│")
         for ind in assessment["indicators"]:
-            print(f"│    + {ind:<{width - 6}}│")
+            for ln in _wrap(f"+ {ind}", W - 4):
+                print(f"│    {ln:<{W - 4}}│")
     if assessment["mitigations"]:
-        print("├" + "─" * width + "┤")
-        print(f"│  Possible mitigations:{'':>{width - 23}}│")
+        print("├" + "─" * W + "┤")
+        print(f"│  {'Possible mitigations:':<{W - 2}}│")
         for mit in assessment["mitigations"]:
-            print(f"│    ~ {mit:<{width - 6}}│")
-    print("└" + "─" * width + "┘")
+            for ln in _wrap(f"~ {mit}", W - 4):
+                print(f"│    {ln:<{W - 4}}│")
+    print("└" + "─" * W + "┘")
 
 
 # ─── detection / probe ───────────────────────────────────────────────────────
@@ -1248,6 +1289,7 @@ def exploit(host: str, port: int, path: str, use_tls: bool,
 # ─── CLI ─────────────────────────────────────────────────────────────────────
 
 def main():
+    _print_banner()
     p = argparse.ArgumentParser(
         description="PHP2Shell CVE-2026-109618/109619 PoC — authorized research only",
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -1320,3 +1362,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
